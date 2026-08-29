@@ -1,0 +1,702 @@
+%=======================================================================
+%  Informe del Taller Práctico: Terraform + Docker
+%
+%  Documento de un solo fichero. Compilar con:
+%     latexmk -pdf main.tex      (o simplemente:  make)
+%=======================================================================
+\documentclass[11pt,a4paper]{article}
+
+%----------------------- Codificación e idioma -------------------------
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[spanish,es-tabla,es-noquoting]{babel}
+\usepackage{lmodern}
+\usepackage{microtype}
+
+%------------------------------ Geometría ------------------------------
+\usepackage[a4paper,top=2.5cm,bottom=2.5cm,left=2.6cm,right=2.4cm,
+            headheight=14pt]{geometry}
+
+%--------------------------- Tablas y listas ---------------------------
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{ragged2e}
+\newcolumntype{Y}{>{\RaggedRight\arraybackslash}X}
+\renewcommand{\arraystretch}{1.3}
+\usepackage{enumitem}
+\setlist{itemsep=3pt,parsep=0pt,topsep=5pt}
+
+%--------------------------- Figuras y color ---------------------------
+\usepackage{graphicx}
+\graphicspath{{figuras/}}
+\usepackage{float}
+\usepackage[table]{xcolor}
+\usepackage{caption}
+\captionsetup{font=small,labelfont=bf,skip=6pt}
+
+%------------------------- Bloques de comandos -------------------------
+\usepackage{listings}
+\definecolor{acento}{HTML}{1168BD}
+\definecolor{fondocodigo}{HTML}{F4F4F6}
+\definecolor{bordecodigo}{HTML}{D7D7DE}
+\lstdefinestyle{shellstyle}{
+  basicstyle       = \ttfamily\small,
+  backgroundcolor  = \color{fondocodigo},
+  frame            = single,
+  rulecolor        = \color{bordecodigo},
+  framesep         = 6pt,
+  xleftmargin      = 2pt,
+  xrightmargin     = 2pt,
+  breaklines       = true,
+  columns          = fullflexible,
+  keepspaces       = true,
+  showstringspaces = false,
+  aboveskip        = 10pt,
+  belowskip        = 10pt}
+\lstnewenvironment{shell}{\lstset{style=shellstyle}}{}
+
+%--------------------------- Estilo de página --------------------------
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small Taller Terraform + Docker}
+\fancyhead[R]{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+\usepackage{titlesec}
+\titleformat{\section}{\normalfont\Large\bfseries\color{acento}}{\thesection.}{8pt}{}
+\titleformat{\subsection}{\normalfont\large\bfseries}{\thesubsection}{8pt}{}
+
+\usepackage[hidelinks]{hyperref}
+\hypersetup{
+  pdftitle  = {Informe del Taller Práctico: Terraform + Docker},
+  pdfauthor = {Jairo Miguel Lara Serrano}}
+
+% Atajo para una figura de pantalla a ancho completo.
+\newcommand{\captura}[2]{%
+  \begin{figure}[H]
+    \centering
+    \includegraphics[width=\linewidth,height=0.72\textheight,keepaspectratio]{#1}
+    \caption{#2}
+  \end{figure}}
+
+%=======================================================================
+\begin{document}
+
+%------------------------------ Portada --------------------------------
+\begin{titlepage}
+\centering
+\vspace*{3cm}
+
+{\Large\bfseries\color{acento} INFORME DE TALLER PRÁCTICO\par}
+\vspace{1cm}
+
+{\Huge\bfseries Terraform + Docker\par}
+\vspace{0.8cm}
+
+{\large\itshape Automatizando una arquitectura Node.js + React + Nginx +
+MySQL, localmente con Docker\par}
+
+\vspace{2cm}
+\rule{\linewidth}{0.4pt}
+\vspace{0.6cm}
+
+{\large Jairo Miguel Lara Serrano\par}
+\vspace{0.4cm}
+{Maestría en Ingeniería de Software\par}
+{Desarrollo de Aplicaciones Empresariales\par}
+\vspace{0.4cm}
+{\today\par}
+
+\vfill
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+%=======================================================================
+\section{Objetivo del taller}
+
+El taller consiste en desplegar, con Terraform y sin ningún proveedor de
+nube, una arquitectura completa de cuatro capas sobre contenedores Docker
+locales, y usarla como banco de pruebas para practicar el archivo de
+estado (\texttt{terraform.tfstate}).
+
+Los objetivos concretos son cinco:
+
+\begin{enumerate}
+  \item Desplegar la arquitectura Nginx (balanceador) $\rightarrow$ React
+        (frontend) $\rightarrow$ Node.js (backend, con réplicas)
+        $\rightarrow$ MySQL, usando el proveedor \texttt{docker} de
+        Terraform.
+  \item Ejecutar el flujo completo \texttt{init} $\rightarrow$
+        \texttt{plan} $\rightarrow$ \texttt{apply} $\rightarrow$
+        \texttt{destroy}.
+  \item Practicar de forma guiada el archivo de estado: inspeccionarlo,
+        provocar y detectar \emph{drift}, reemplazar recursos puntuales,
+        renombrar direcciones sin destruir infraestructura e importar un
+        recurso creado a mano.
+  \item Escalar el backend cambiando una sola variable y observar cómo
+        Terraform recalcula el plan y regenera la configuración de Nginx.
+  \item Revisar qué haría falta antes de llevar este mismo patrón a
+        producción.
+\end{enumerate}
+
+Todo corre en local: no se usó AWS, GCP ni Azure en ningún momento, y el
+taller no consumió crédito de nube.
+
+%=======================================================================
+\section{Arquitectura desplegada}
+
+Nginx es el único servicio con un puerto publicado al host
+(\texttt{8080}). Reparte \texttt{/api/*} entre las réplicas del backend
+mediante balanceo \emph{round-robin} y sirve \texttt{/} haciendo proxy al
+contenedor del frontend. Todo lo demás vive dentro de la red Docker
+privada \texttt{iac-workshop-net}, sin exposición al exterior.
+
+\begin{table}[H]
+\centering
+\caption{Componentes de la arquitectura}
+\begin{tabularx}{\linewidth}{@{}lYl@{}}
+\toprule
+\textbf{Componente} & \textbf{Función} & \textbf{Puerto} \\
+\midrule
+Nginx           & Balanceador y \emph{reverse proxy}; único punto de entrada & 8080 (host) \\
+React (frontend)& Interfaz servida como estáticos desde su propio Nginx interno & 80 (interno) \\
+Node.js/Express & API con \texttt{/api/health} y \texttt{/api/visits}; N réplicas & 3000 (interno) \\
+MySQL 8.0       & Base de datos con volumen nombrado para persistencia & 3306 (interno) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Dos detalles del diseño que resultan importantes más adelante:
+
+\begin{itemize}
+  \item El backend reporta su \texttt{hostname} en \texttt{/api/health}.
+        Como Terraform fija ese hostname explícitamente
+        (\texttt{backend-1}, \texttt{backend-2}\ldots), el balanceo de
+        carga se puede comprobar visualmente desde el navegador.
+  \item La configuración de Nginx no es un fichero estático: se genera en
+        el momento del \texttt{apply} con \texttt{templatefile()} a partir
+        de la lista de réplicas. Cambiar el número de réplicas cambia ese
+        contenido y obliga a recrear el contenedor de Nginx.
+\end{itemize}
+
+%=======================================================================
+\section{Entorno y estructura del proyecto}
+
+\begin{table}[H]
+\centering
+\caption{Herramientas utilizadas}
+\begin{tabularx}{\linewidth}{@{}lYl@{}}
+\toprule
+\textbf{Herramienta} & \textbf{Versión mínima} & \textbf{Verificación} \\
+\midrule
+Docker Desktop / Engine & 24.x  & \texttt{docker version} \\
+Terraform CLI           & 1.5.0 & \texttt{terraform -version} \\
+Node.js (opcional)      & 20.x  & \texttt{node -v} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+El proveedor \texttt{kreuzwerker/docker} habla directamente con el socket
+local de Docker, el mismo que usa el comando \texttt{docker}. Por eso no
+hacen falta credenciales de ningún tipo. El único acceso a internet que se
+necesita es el de la primera ejecución, para descargar el plugin del
+proveedor y las imágenes base.
+
+Solo el directorio \texttt{terraform/} contiene código de infraestructura;
+\texttt{backend/}, \texttt{frontend/}, \texttt{nginx/} y \texttt{mysql/}
+son las aplicaciones y ficheros de configuración que Terraform construye y
+despliega.
+
+\begin{shell}
+workshop/
+  backend/            API Express (health + visits)
+  frontend/           UI React que consume la API
+  nginx/              plantilla nginx.conf.tpl que Terraform renderiza
+  mysql/              esquema inicial de la base de datos
+  terraform/
+    versions.tf       provider + version de Terraform
+    variables.tf      replicas, puerto, credenciales
+    locals.tf         lista de alias backend-1, backend-2, ...
+    network.tf        red privada iac-workshop-net
+    mysql.tf          imagen + volumen + contenedor
+    backend.tf        usa "count" para las replicas
+    frontend.tf       una sola replica
+    nginx.tf          usa templatefile() + upload
+    outputs.tf        URLs y nombres de contenedores
+\end{shell}
+
+%=======================================================================
+\section{Ciclo básico: de \texttt{init} a la aplicación funcionando}
+
+Todos los comandos se ejecutan dentro de \texttt{terraform/}.
+
+\subsection{Paso 1 --- Inicializar}
+
+\begin{shell}
+cd workshop/terraform
+terraform init
+\end{shell}
+
+Terraform descargó el plugin \texttt{kreuzwerker/docker} v4.5.0, preparó el
+directorio \texttt{.terraform/} y creó el fichero de bloqueo
+\texttt{.terraform.lock.hcl}, que fija esa versión exacta para futuras
+ejecuciones.
+
+\captura{01-init}{\texttt{terraform init}: descarga del proveedor y
+creación del fichero de bloqueo de versiones.}
+
+\subsection{Paso 2 --- Formatear y validar}
+
+\begin{shell}
+terraform fmt
+terraform validate
+\end{shell}
+
+\texttt{fmt} normaliza el estilo del código y \texttt{validate} revisa la
+sintaxis y las referencias internas. Ninguno de los dos necesita que
+Docker esté corriendo, así que sirven como comprobación barata antes de
+tocar nada real.
+
+\captura{02-fmt-validate}{La configuración es sintácticamente válida.}
+
+\subsection{Paso 3 --- Planificar}
+
+\begin{shell}
+terraform plan
+\end{shell}
+
+El plan anunció \textbf{11 recursos a crear} y ningún cambio ni
+destrucción: la red, el volumen de MySQL, cuatro imágenes y cinco
+contenedores. Todavía no se creó nada; este es el momento de leer con
+calma qué va a pasar.
+
+\captura{03-plan}{Resumen del plan: \texttt{11 to add, 0 to change, 0 to
+destroy}, junto con los valores que tomarán los \emph{outputs}.}
+
+\subsection{Paso 4 --- Aplicar}
+
+\begin{shell}
+terraform apply
+\end{shell}
+
+\captura{04-apply-confirm}{Terraform pide confirmación explícita antes de
+ejecutar el plan; solo se acepta \texttt{yes}.}
+
+Durante el \texttt{apply} se nota que MySQL tarda alrededor de un minuto
+en completarse: no basta con que el proceso arranque, porque el recurso
+declara un \texttt{healthcheck} con \texttt{wait = true} y Terraform no lo
+da por aplicado hasta que MySQL responde \emph{healthy}. El
+\texttt{depends\_on} del backend obliga a esperar a que eso ocurra.
+
+\captura{05-apply-complete}{Creación de los 11 recursos en orden de
+dependencias. MySQL tarda 1m5s por el \emph{healthcheck}; los backends se
+crean después, en paralelo.}
+
+\captura{06-outputs}{\emph{Outputs} finales: URL de la aplicación, URL de
+salud de la API y nombres de los contenedores generados.}
+
+\subsection{Paso 5 --- Verificar}
+
+\begin{shell}
+docker ps
+curl http://localhost:8080/api/health
+curl http://localhost:8080/api/visits
+\end{shell}
+
+\captura{07-docker-ps}{Los cinco contenedores en ejecución. Solo
+\texttt{workshop-nginx} publica un puerto al host
+(\texttt{0.0.0.0:8080->80/tcp}); MySQL aparece como \emph{healthy}.}
+
+Abriendo \texttt{http://localhost:8080} se ve la interfaz de React
+leyendo el contador de visitas desde MySQL. El botón que dispara seis
+peticiones a \texttt{/api/health} muestra el balanceo en vivo: las
+respuestas se reparten entre \texttt{backend-1} y \texttt{backend-2}.
+
+\captura{08-app-2-replicas}{Aplicación funcionando con dos réplicas. Las
+seis peticiones alternan entre \texttt{backend-2} y \texttt{backend-1}.}
+
+%=======================================================================
+\section{El archivo de estado}
+
+Esta es la parte central del taller y la que no tiene equivalente en
+Docker Compose. Compose puede levantar los mismos servicios, pero no
+mantiene un registro persistente y consultable de qué es cada recurso, con
+qué atributos y cómo se relaciona con los demás.
+
+\subsection{Inspeccionar el estado}
+
+\begin{shell}
+terraform state list
+\end{shell}
+
+Lista las direcciones de todos los recursos administrados, incluyendo el
+índice de cada réplica del backend.
+
+\captura{09-state-list}{Las once direcciones del estado. Nótese
+\texttt{docker\_container.backend[0]} y
+\texttt{docker\_container.backend[1]}: \texttt{count} produce dos recursos
+independientes en el grafo.}
+
+\begin{shell}
+terraform state show "docker_container.backend[0]"
+\end{shell}
+
+\captura{10-state-show-backend}{Todos los atributos conocidos de una
+réplica concreta: su ID real de Docker, su IP interna
+(\texttt{172.21.0.4}), su hostname (\texttt{backend-1}), su alias de red y
+su usuario no root (\texttt{node}). Las variables de entorno aparecen
+ocultas por estar marcadas como sensibles.}
+
+\begin{shell}
+terraform show
+\end{shell}
+
+\captura{11-terraform-show}{Volcado completo del estado en formato
+legible: imágenes, red con su subred \texttt{172.21.0.0/16}, volumen con
+su punto de montaje real en el host, y los \emph{outputs}.}
+
+\subsection{Idempotencia}
+
+\begin{shell}
+terraform plan
+\end{shell}
+
+Sin haber tocado nada, Terraform re-consulta la infraestructura real,
+compara contra el estado y concluye que no hay nada que hacer. Esto es la
+idempotencia declarativa en acción.
+
+\captura{12-plan-sin-cambios}{\texttt{No changes. Your infrastructure
+matches the configuration.}}
+
+\subsection{Provocar y detectar \emph{drift}}
+
+El \emph{drift} es la desviación entre la infraestructura real y lo que el
+código declara, típicamente por un cambio manual. Se simuló borrando un
+contenedor directamente con el CLI de Docker, sin pasar por Terraform:
+
+\begin{shell}
+docker rm -f workshop-backend-2
+terraform plan
+\end{shell}
+
+Terraform detectó que \texttt{docker\_container.backend[1]} ya no existe
+en la realidad aunque el estado dice que debería, y propuso recrearlo.
+
+\captura{13-drift-plan}{Detección del \emph{drift}: el recurso desaparecido
+se marca para creación, con \texttt{hostname = "backend-2"} y su alias de
+red.}
+
+\captura{14-drift-plan-resumen}{Resumen: \texttt{1 to add, 0 to change, 0
+to destroy}. Terraform propone tocar solo el recurso afectado.}
+
+\subsection{Corregir el \emph{drift}}
+
+\begin{shell}
+terraform apply
+\end{shell}
+
+\captura{15-drift-apply}{El \texttt{apply} recrea únicamente el contenedor
+faltante.}
+
+\captura{16-drift-apply-resumen}{\texttt{1 added, 0 changed, 0 destroyed}:
+el resto del estado seguía coincidiendo con la realidad y no se tocó.}
+
+\subsection{Reemplazar un recurso puntual}
+
+Cuando no hay \emph{drift} pero se quiere forzar una instancia nueva y
+limpia de un recurso concreto:
+
+\begin{shell}
+terraform apply -replace="docker_container.backend[0]"
+\end{shell}
+
+\captura{17-replace-plan}{El plan marca el recurso como \texttt{replaced,
+as requested} y usa el símbolo \texttt{-/+} (destruir y luego crear).}
+
+\captura{18-replace-apply}{\texttt{1 added, 0 changed, 1 destroyed}: solo
+\texttt{backend-1} se recreó; \texttt{backend-2} quedó intacto.}
+
+Esta bandera sustituye al antiguo \texttt{terraform taint}, desaconsejado
+desde Terraform 0.15.2.
+
+\subsection{Renombrar una dirección sin destruir el recurso}
+
+Si se renombra un recurso solo en el código, Terraform planea destruir el
+antiguo y crear uno nuevo, aunque en la práctica sea el mismo contenedor.
+\texttt{state mv} evita esa recreación innecesaria:
+
+\begin{shell}
+terraform state mv docker_container.frontend docker_container.web
+\end{shell}
+
+\captura{19-state-mv}{La dirección se mueve dentro del estado:
+\texttt{Successfully moved 1 object(s)}.}
+
+\captura{20-state-mv-list}{El estado ya contiene
+\texttt{docker\_container.web} en lugar de
+\texttt{docker\_container.frontend}, sin que el contenedor real se haya
+tocado.}
+
+En este punto el estado y el código quedan momentáneamente
+desincronizados, y el siguiente \texttt{plan} falla. Es un error esperado
+y didáctico: \texttt{nginx.tf} seguía apuntando a la dirección vieja.
+
+\captura{21-error-referencia}{\texttt{Reference to undeclared resource}:
+\texttt{nginx.tf} línea 35 todavía referencia
+\texttt{docker\_container.frontend}.}
+
+Tras renombrar también el bloque en el código, el plan vuelve a mostrar
+``sin cambios'' en lugar de un \emph{destroy/create}, que es exactamente
+el objetivo del ejercicio.
+
+\captura{22-plan-tras-renombrar}{Con código y estado alineados, Terraform
+no propone ninguna acción.}
+
+\subsection{Importar un recurso creado manualmente}
+
+Este es probablemente el ejercicio más ilustrativo. Se creó un contenedor
+de Redis \textbf{completamente fuera de Terraform}, como si fuera un
+recurso heredado:
+
+\begin{shell}
+docker network connect iac-workshop-net --alias redis-manual \
+  $(docker run -d --name manual-redis redis:7-alpine)
+\end{shell}
+
+\captura{23-redis-docker-run}{Docker descarga \texttt{redis:7-alpine} y
+crea el contenedor \texttt{manual-redis} al margen de Terraform.}
+
+Después se escribió en \texttt{terraform/redis.tf} el bloque que
+\emph{debería} describir ese contenedor, y se adoptó en el estado sin
+recrearlo:
+
+\begin{shell}
+terraform import docker_container.redis \
+  $(docker inspect -f '{{.Id}}' manual-redis)
+\end{shell}
+
+\captura{24-terraform-import}{\texttt{Import successful!} El contenedor
+pasa a estar administrado por Terraform sin haber sido destruido ni vuelto
+a crear.}
+
+\captura{25-import-plan}{El plan posterior muestra
+\texttt{docker\_container.redis must be replaced}: algunos atributos del
+código no coinciden exactamente con los del contenedor importado (por
+ejemplo el \texttt{command}), lo que fuerza una recreación. Es un
+resultado normal del ejercicio.}
+
+\captura{26-import-plan-resumen}{\texttt{2 to add, 0 to change, 1 to
+destroy}: se crea además \texttt{docker\_image.redis}, porque el recurso
+de imagen no soporta \texttt{import} en este proveedor. Como la imagen ya
+existía localmente, es un efecto inofensivo.}
+
+\captura{27-import-apply}{El \texttt{apply} completa la adopción del
+recurso.}
+
+Docker Compose no tiene ningún comando equivalente a \texttt{terraform
+import}: solo puede gestionar lo que él mismo creó. El ejercicio deja
+además una lección extra: no todos los tipos de recurso de un proveedor
+soportan importación, y conviene revisar la documentación antes de
+asumirlo.
+
+\subsection{Limpieza del ejercicio y una observación}
+
+\begin{shell}
+rm terraform/redis.tf
+docker rm -f manual-redis
+terraform state rm docker_container.redis docker_image.redis
+\end{shell}
+
+\captura{28-import-limpieza}{\texttt{terraform state rm} saca los dos
+recursos del estado sin destruirlos en la realidad. Nótese, sin embargo,
+el mensaje \texttt{rm: terraform/redis.tf: No such file or directory}.}
+
+Merece la pena detenerse en ese detalle. El comando se ejecutó desde
+dentro de \texttt{terraform/}, así que la ruta relativa
+\texttt{terraform/redis.tf} no resolvía y el fichero \textbf{no se borró}.
+El resultado fue que, en el siguiente \texttt{apply} (durante el escalado
+de la sección siguiente), Terraform volvió a crear Redis a partir de ese
+\texttt{redis.tf} superviviente.
+
+Lejos de ser solo un descuido, es una demostración práctica del principio
+de fondo del taller: \textbf{el código es la fuente de verdad}. Sacar algo
+del estado no lo elimina de la configuración, y mientras el bloque siga
+declarado Terraform lo reconstruirá. La ruta correcta desde
+\texttt{terraform/} habría sido simplemente \texttt{rm redis.tf}.
+
+\subsection{Resumen de la comparación con Docker Compose}
+
+\begin{table}[H]
+\centering
+\caption{Qué puede hacer cada herramienta}
+\begin{tabularx}{\linewidth}{@{}Yll@{}}
+\toprule
+\textbf{Capacidad} & \textbf{Compose} & \textbf{Terraform} \\
+\midrule
+Detectar si la configuración cambió              & Sí       & Sí \\
+Detectar \emph{drift} por cambios manuales       & No       & Sí (\texttt{plan}) \\
+Vista previa con \emph{diff} explícito           & No       & Sí (\texttt{plan}) \\
+Consultar atributos completos de un recurso      & Limitado & Sí (\texttt{state show}) \\
+Renombrar sin recrear el recurso real            & No       & Sí (\texttt{state mv}) \\
+Adoptar un recurso creado por fuera              & No       & Sí (\texttt{import}) \\
+Reemplazar un recurso puntual bajo demanda       & No       & Sí (\texttt{-replace}) \\
+Bloqueo contra aplicaciones concurrentes         & No       & Sí (\emph{backend} remoto) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+%=======================================================================
+\section{Escalar el backend}
+
+Basta cambiar una sola variable en \texttt{terraform.tfvars}:
+
+\begin{shell}
+backend_replica_count = 4
+\end{shell}
+
+\begin{shell}
+terraform plan
+\end{shell}
+
+\captura{29-escalar-plan}{El plan añade \texttt{workshop-backend-3} y
+\texttt{workshop-backend-4} a la lista de \emph{outputs}.}
+
+Lo interesante no son las réplicas nuevas, sino que Nginx también aparece
+marcado para recreación. Su configuración se genera con
+\texttt{templatefile()} a partir de la lista de réplicas; al cambiar esa
+lista cambia el contenido del fichero, y como el fichero se sube al crear
+el contenedor, no se puede parchear en caliente. Es el principio de
+infraestructura inmutable, visible en la práctica.
+
+\captura{30-escalar-nginx-replace}{\texttt{docker\_container.nginx must be
+replaced}: la recreación no viene de un cambio manual, sino de una
+dependencia sobre datos que cambiaron.}
+
+\begin{shell}
+terraform apply
+\end{shell}
+
+\captura{31-escalar-apply}{\texttt{5 added, 0 changed, 1 destroyed}: dos
+backends nuevos, Nginx destruido y recreado, y Redis recreado a partir del
+\texttt{redis.tf} que había sobrevivido a la limpieza.}
+
+Volviendo al navegador, el botón de balanceo ahora reparte las peticiones
+entre cuatro hostnames distintos.
+
+\captura{32-app-4-replicas}{La misma interfaz, ahora repartiendo entre
+\texttt{backend-1} a \texttt{backend-4}. El contador de visitas subió a 2,
+leído desde el volumen persistente de MySQL.}
+
+%=======================================================================
+\section{Destruir el entorno}
+
+\begin{shell}
+terraform destroy
+\end{shell}
+
+\captura{33-destroy}{\texttt{Destroy complete! Resources: 15 destroyed.}
+Terraform elimina todo en orden inverso de dependencias: primero los
+contenedores, luego las imágenes, y al final el volumen y la red.}
+
+Los 15 recursos son los 11 originales más los 2 backends añadidos al
+escalar y los 2 de Redis. Conviene subrayar que \texttt{destroy} se llevó
+también el volumen \texttt{iac-workshop-mysql-data} y, con él, los datos
+de MySQL. En un entorno con datos reales, \texttt{lifecycle \{
+prevent\_destroy = true \}} sobre ese volumen es la red de seguridad
+contra exactamente este comando.
+
+%=======================================================================
+\section{Consideraciones antes de llevarlo a producción}
+
+El proveedor \texttt{docker} es excelente para aprender y para desarrollo
+local, pero no está pensado para producción. Los ajustes que un equipo
+debería hacer antes de dar ese salto:
+
+\begin{enumerate}
+  \item \textbf{Cambiar de orquestador.} Este proveedor administra un solo
+        host: no reinicia nada si el host cae, no distribuye carga entre
+        máquinas y no tiene autoescalado. El mismo enfoque declarativo se
+        aplica con Terraform sobre Kubernetes o ECS.
+  \item \textbf{Backend remoto de estado, con bloqueo.} El
+        \texttt{terraform.tfstate} local es inviable en equipo: dos
+        personas aplicando a la vez pueden corromperlo.
+  \item \textbf{Nunca variables sensibles con \texttt{default}.} Las
+        contraseñas no deberían tener valor por defecto, ni vivir en un
+        \texttt{.tfvars} versionado, sino inyectarse desde un gestor de
+        secretos.
+  \item \textbf{Tags de imagen inmutables, nunca \texttt{:latest}}, para
+        poder hacer \emph{rollback} con certeza.
+  \item \textbf{Límites de recursos por contenedor}
+        (\texttt{memory}, \texttt{cpu\_shares}).
+  \item \textbf{TLS en el punto de entrada}, terminando en el balanceador.
+  \item \textbf{Backups del dato}, o mejor, una base de datos gestionada.
+  \item \textbf{\texttt{prevent\_destroy}} en los recursos con estado
+        crítico.
+  \item \textbf{Pipeline de CI/CD con aprobación humana}, políticas como
+        código y escaneo de imágenes.
+  \item \textbf{Usuario no root en los contenedores} (ya se cumple en el
+        backend, que usa \texttt{USER node}).
+  \item \textbf{Monitoreo y logging centralizados.}
+  \item \textbf{Ambientes separados con estados completamente distintos},
+        para limitar el radio de explosión de un error.
+\end{enumerate}
+
+%=======================================================================
+\section{Referencia rápida de comandos}
+
+\begin{table}[H]
+\centering
+\caption{Comandos utilizados en el taller}
+\begin{tabularx}{\linewidth}{@{}lY@{}}
+\toprule
+\textbf{Comando} & \textbf{Qué hace} \\
+\midrule
+\texttt{terraform init}    & Descarga proveedores y prepara el directorio \\
+\texttt{terraform fmt}     & Normaliza el formato del código \\
+\texttt{terraform validate}& Revisa sintaxis y referencias, sin tocar Docker \\
+\texttt{terraform plan}    & Calcula y muestra el plan, sin aplicar nada \\
+\texttt{terraform apply}   & Ejecuta el plan (pide confirmación) \\
+\texttt{terraform destroy} & Elimina todos los recursos administrados \\
+\texttt{terraform state list} & Lista las direcciones del estado \\
+\texttt{terraform state show} & Muestra los atributos de un recurso \\
+\texttt{terraform show}    & Vuelca el estado completo en formato legible \\
+\texttt{terraform state mv}& Renombra una dirección sin destruir el recurso \\
+\texttt{terraform state rm}& Deja de administrar un recurso, sin destruirlo \\
+\texttt{terraform import}  & Adopta un recurso ya existente \\
+\texttt{terraform apply -replace} & Fuerza la recreación de un recurso \\
+\texttt{terraform output}  & Muestra los valores de salida \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+%=======================================================================
+\section{Conclusiones}
+
+\begin{itemize}
+  \item El flujo \texttt{init} $\rightarrow$ \texttt{plan} $\rightarrow$
+        \texttt{apply} se completó sin incidencias: 11 recursos creados y
+        la aplicación respondiendo en \texttt{localhost:8080}, con el
+        balanceo entre réplicas verificable desde el navegador.
+  \item El archivo de estado es la diferencia real frente a Docker
+        Compose. Detectar el borrado manual de un contenedor, renombrar
+        una dirección sin recrear nada y adoptar un contenedor creado a
+        mano son operaciones que Compose sencillamente no puede ofrecer,
+        porque no mantiene un registro consultable de la infraestructura.
+  \item El escalado dejó ver el efecto en cascada más interesante del
+        taller: cambiar una variable no solo añadió réplicas, sino que
+        obligó a recrear Nginx, porque su configuración se deriva de esa
+        misma variable. Terraform razona sobre el grafo de dependencias,
+        no sobre ficheros sueltos.
+  \item El descuido en la limpieza de Redis resultó ser el ejemplo más
+        claro de todo el ejercicio: sacar un recurso del estado no lo
+        borra del código, y mientras el bloque siga declarado Terraform lo
+        reconstruirá en el siguiente \texttt{apply}.
+  \item El \texttt{destroy} final eliminó los 15 recursos, incluido el
+        volumen de MySQL, confirmando por qué \texttt{prevent\_destroy} es
+        necesario en cuanto hay datos que importan.
+\end{itemize}
+
+\end{document}

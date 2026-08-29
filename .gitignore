@@ -73,3 +73,8 @@ tmp/
 *.swp
 *.swo
 *~
+
+# --- Documento aparte ------------------------------------------------
+# informe-taller/ es otro proyecto con su propio repositorio git
+# (descripción arquitectónica TransitLink). No pertenece a este repo.
+informe-taller/
