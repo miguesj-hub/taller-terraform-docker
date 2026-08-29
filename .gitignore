@@ -1,0 +1,75 @@
+# ---------------------------------------------------------------
+# Taller Terraform + Docker
+# ---------------------------------------------------------------
+
+# --- macOS / SO ---
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+desktop.ini
+
+# --- Terraform ---
+# Directorio de trabajo y providers descargados (pesan mucho)
+**/.terraform/
+**/.terraform.tfstate.lock.info
+
+# Estado: contiene valores en claro (passwords, IPs, tokens)
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# Variables con valores reales; el .example SÍ se versiona
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+!example.tfvars
+
+# Planes binarios y logs de crash
+*.tfplan
+*.tfplan.*
+crash.log
+crash.*.log
+
+# Overrides locales de configuración
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# --- Node (frontend / backend) ---
+node_modules/
+dist/
+build/
+.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# --- Variables de entorno / secretos ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.*
+
+# --- Logs y temporales ---
+*.log
+logs/
+tmp/
+*.tmp
+
+# --- Editores / IDEs ---
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~

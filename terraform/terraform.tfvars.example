@@ -1,0 +1,6 @@
+# Copia este archivo a "terraform.tfvars" para personalizar el taller sin
+# tocar variables.tf. terraform.tfvars NO debería subirse a Git si algún
+# día contiene valores reales/sensibles (agrégalo a .gitignore).
+
+backend_replica_count = 2
+nginx_host_port       = 8080

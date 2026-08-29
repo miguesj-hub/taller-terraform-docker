@@ -1,0 +1,9 @@
+# Reglas específicas del módulo. Lo general está en el .gitignore raíz.
+#
+# NOTA: .terraform.lock.hcl SÍ se versiona a propósito — fija las versiones
+# exactas de los providers para que todos en el taller instalen lo mismo.
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+crash.log
