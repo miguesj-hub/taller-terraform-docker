@@ -103,10 +103,20 @@ MySQL, localmente con Docker\par}
 
 {\large Jairo Miguel Lara Serrano\par}
 \vspace{0.4cm}
+{\large Jumandi Andrade\par}
+\vspace{0.4cm}
+{\large Klever Guamushig\par}
+\vspace{0.4cm}
+{\large Guillermo Vallejo\par}
+\vspace{1.2cm}
 {Maestría en Ingeniería de Software\par}
+\vspace{0.4cm}
 {Desarrollo de Aplicaciones Empresariales\par}
 \vspace{0.4cm}
+\vfill
 {\today\par}
+\vspace{0.6cm}
+{\small\url{https://github.com/miguesj-hub/taller-terraform-docker}\par}
 
 \vfill
 \end{titlepage}
@@ -144,6 +154,10 @@ Los objetivos concretos son cinco:
 
 Todo corre en local: no se usó AWS, GCP ni Azure en ningún momento, y el
 taller no consumió crédito de nube.
+
+El código completo del taller, junto con este informe, está disponible en
+el repositorio
+\url{https://github.com/miguesj-hub/taller-terraform-docker}.
 
 %=======================================================================
 \section{Arquitectura desplegada}
@@ -608,69 +622,6 @@ de MySQL. En un entorno con datos reales, \texttt{lifecycle \{
 prevent\_destroy = true \}} sobre ese volumen es la red de seguridad
 contra exactamente este comando.
 
-%=======================================================================
-\section{Consideraciones antes de llevarlo a producción}
-
-El proveedor \texttt{docker} es excelente para aprender y para desarrollo
-local, pero no está pensado para producción. Los ajustes que un equipo
-debería hacer antes de dar ese salto:
-
-\begin{enumerate}
-  \item \textbf{Cambiar de orquestador.} Este proveedor administra un solo
-        host: no reinicia nada si el host cae, no distribuye carga entre
-        máquinas y no tiene autoescalado. El mismo enfoque declarativo se
-        aplica con Terraform sobre Kubernetes o ECS.
-  \item \textbf{Backend remoto de estado, con bloqueo.} El
-        \texttt{terraform.tfstate} local es inviable en equipo: dos
-        personas aplicando a la vez pueden corromperlo.
-  \item \textbf{Nunca variables sensibles con \texttt{default}.} Las
-        contraseñas no deberían tener valor por defecto, ni vivir en un
-        \texttt{.tfvars} versionado, sino inyectarse desde un gestor de
-        secretos.
-  \item \textbf{Tags de imagen inmutables, nunca \texttt{:latest}}, para
-        poder hacer \emph{rollback} con certeza.
-  \item \textbf{Límites de recursos por contenedor}
-        (\texttt{memory}, \texttt{cpu\_shares}).
-  \item \textbf{TLS en el punto de entrada}, terminando en el balanceador.
-  \item \textbf{Backups del dato}, o mejor, una base de datos gestionada.
-  \item \textbf{\texttt{prevent\_destroy}} en los recursos con estado
-        crítico.
-  \item \textbf{Pipeline de CI/CD con aprobación humana}, políticas como
-        código y escaneo de imágenes.
-  \item \textbf{Usuario no root en los contenedores} (ya se cumple en el
-        backend, que usa \texttt{USER node}).
-  \item \textbf{Monitoreo y logging centralizados.}
-  \item \textbf{Ambientes separados con estados completamente distintos},
-        para limitar el radio de explosión de un error.
-\end{enumerate}
-
-%=======================================================================
-\section{Referencia rápida de comandos}
-
-\begin{table}[H]
-\centering
-\caption{Comandos utilizados en el taller}
-\begin{tabularx}{\linewidth}{@{}lY@{}}
-\toprule
-\textbf{Comando} & \textbf{Qué hace} \\
-\midrule
-\texttt{terraform init}    & Descarga proveedores y prepara el directorio \\
-\texttt{terraform fmt}     & Normaliza el formato del código \\
-\texttt{terraform validate}& Revisa sintaxis y referencias, sin tocar Docker \\
-\texttt{terraform plan}    & Calcula y muestra el plan, sin aplicar nada \\
-\texttt{terraform apply}   & Ejecuta el plan (pide confirmación) \\
-\texttt{terraform destroy} & Elimina todos los recursos administrados \\
-\texttt{terraform state list} & Lista las direcciones del estado \\
-\texttt{terraform state show} & Muestra los atributos de un recurso \\
-\texttt{terraform show}    & Vuelca el estado completo en formato legible \\
-\texttt{terraform state mv}& Renombra una dirección sin destruir el recurso \\
-\texttt{terraform state rm}& Deja de administrar un recurso, sin destruirlo \\
-\texttt{terraform import}  & Adopta un recurso ya existente \\
-\texttt{terraform apply -replace} & Fuerza la recreación de un recurso \\
-\texttt{terraform output}  & Muestra los valores de salida \\
-\bottomrule
-\end{tabularx}
-\end{table}
 
 %=======================================================================
 \section{Conclusiones}
